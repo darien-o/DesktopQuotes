@@ -27,6 +27,7 @@
 		5F1CED6D2D7682FF00CB57C4 /* DesktopQuotes.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DesktopQuotes.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5F1CED7E2D76830300CB57C4 /* DesktopQuotesTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DesktopQuotesTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		5F1CED882D76830300CB57C4 /* DesktopQuotesUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DesktopQuotesUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		5F1CEDA42D7690D500CB57C4 /* WallpaperPhrases */ = {isa = PBXFileReference; lastKnownFileType = wrapper; name = WallpaperPhrases; path = ../WallpaperPhrases; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -75,6 +76,7 @@
 		5F1CED642D7682FF00CB57C4 = {
 			isa = PBXGroup;
 			children = (
+				5F1CEDA42D7690D500CB57C4 /* WallpaperPhrases */,
 				5F1CED6F2D7682FF00CB57C4 /* DesktopQuotes */,
 				5F1CED812D76830300CB57C4 /* DesktopQuotesTests */,
 				5F1CED8B2D76830300CB57C4 /* DesktopQuotesUITests */,
@@ -398,7 +400,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"DesktopQuotes/Preview Content\"";
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = DesktopQuotes/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -423,7 +425,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"DesktopQuotes/Preview Content\"";
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = DesktopQuotes/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
