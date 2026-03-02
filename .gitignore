@@ -123,7 +123,7 @@ app_debug.log
 # Build artifacts
 build/
 
-# Kiro specs (optional - remove if you want to track specs)
+# Kiro specs 
 .kiro/
 
 # IDE files
@@ -144,3 +144,7 @@ coverage/
 
 # Documentation build
 docs/_build/
+
+#debug
+debug/
+releases/
