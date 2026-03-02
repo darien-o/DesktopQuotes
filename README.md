@@ -1,3 +1,7 @@
+
+![GitHub release](https://img.shields.io/github/v/release/yourusername/DesktopQuotes)
+![Downloads](https://img.shields.io/github/downloads/yourusername/DesktopQuotes/total)
+
 # DesktopQuotes
 
 A minimalist macOS app that displays inspirational quotes on your desktop background, behind all windows and applications.
@@ -16,13 +20,27 @@ A minimalist macOS app that displays inspirational quotes on your desktop backgr
 
 ## Installation
 
-1. Clone the repository
-2. Open `DesktopQuotes.xcodeproj` in Xcode
-3. Build and run (Cmd + R)
+### Download (Recommended)
 
+1. Download the latest release: [DesktopQuotes.zip](https://github.com/yourusername/DesktopQuotes/releases/latest)
+2. Unzip the file
+3. Drag `DesktopQuotes.app` to your Applications folder
+4. **First time**: Right-click → Open → Click "Open" (security prompt)
+
+See [INSTALL.md](INSTALL.md) for detailed installation instructions.
+
+### Build from Source
+
+1. Clone the repository
+2. Build the release version:
+   ```bash
+   ./build_release.sh
+   ```
+3. The app will be at `./DesktopQuotes.app`
+
+Or open in Xcode and build (⌘R):
 ```bash
-# Or build from command line
-xcodebuild -project DesktopQuotes.xcodeproj -scheme DesktopQuotes -configuration Debug build
+open DesktopQuotes.xcodeproj
 ```
 
 ## Usage
@@ -31,8 +49,7 @@ The app runs automatically on launch and displays quotes on all screens and desk
 
 ### Permissions
 
-- **Screen Recording** (optional): Enables adaptive text colors based on your wallpaper
-- **Network Access**: Required to fetch new quotes from ZenQuotes API
+- **Network Access**: Required to fetch new quotes from ZenQuotes API (automatically configured)
 
 ## Quote Source
 
