@@ -9,133 +9,163 @@ import SwiftUI
 import AppKit
 
 class MultiWindowManager: ObservableObject {
-    private var windowControllers: [QuoteWindowController] = []
+    private var windowControllers: [String: QuoteWindowController] = [:]
     private let quoteManager: QuoteManager
-    private var isUpdating = false
-    private var pendingUpdate = false
     private var screenChangeWorkItem: DispatchWorkItem?
+    private var screenObserver: NSObjectProtocol?
+    private var spaceObserver: NSObjectProtocol?
+    private var previousScreenCount: Int = 0
     
     init(quoteManager: QuoteManager) {
         self.quoteManager = quoteManager
         
         // Delay setup to ensure app is fully initialized
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             self?.setupWindows()
             self?.observeChanges()
         }
     }
     
+    deinit {
+        screenChangeWorkItem?.cancel()
+        if let observer = screenObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = spaceObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+        }
+        removeAllWindows()
+    }
+    
+    // MARK: - Screen Identifier
+    
+    /// Create a stable identifier for a screen based on its display ID.
+    /// This avoids relying on NSScreen object identity which changes across
+    /// connect/disconnect cycles.
+    private func screenIdentifier(for screen: NSScreen) -> String {
+        let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID ?? 0
+        return "display-\(displayID)"
+    }
+    
+    // MARK: - Window Setup
+    
     private func setupWindows() {
         let screens = NSScreen.screens
-        let screenCount = screens.count
-        NSLog("🖥️  Setting up windows for \(screenCount) screens")
-        print("🖥️  Setting up windows for \(screenCount) screens")
-        NSLog("🖥️  Available screens:")
-        print("🖥️  Available screens:")
+        previousScreenCount = screens.count
         
-        // Log all screen details
+        NSLog("🖥️  Setting up windows for \(screens.count) screens")
+        
         for (index, screen) in screens.enumerated() {
-            let logMsg = "   Screen \(index): frame=\(screen.frame), visibleFrame=\(screen.visibleFrame)"
-            NSLog(logMsg)
-            print(logMsg)
+            let id = screenIdentifier(for: screen)
+            NSLog("   Screen \(index): id=\(id), frame=\(screen.frame)")
+            
+            if windowControllers[id] == nil {
+                let controller = QuoteWindowController(
+                    screen: screen,
+                    quoteManager: quoteManager,
+                    windowIndex: index
+                )
+                windowControllers[id] = controller
+                controller.showWindow()
+            }
         }
         
-        // Create a window for each screen
-        for (index, screen) in screens.enumerated() {
-            let logMsg = "🪟 Creating window \(index) for screen at \(screen.frame)"
-            NSLog(logMsg)
-            print(logMsg)
-            createWindow(for: screen, index: index)
-        }
-        
-        let finalMsg = "✅ Created \(windowControllers.count) window controllers"
-        NSLog(finalMsg)
-        print(finalMsg)
+        NSLog("✅ Active window controllers: \(windowControllers.count)")
     }
     
-    private func createWindow(for screen: NSScreen, index: Int) {
-        let controller = QuoteWindowController(
-            screen: screen,
-            quoteManager: quoteManager,
-            windowIndex: index
-        )
-        windowControllers.append(controller)
-        controller.showWindow()
-    }
+    // MARK: - Observers
     
     private func observeChanges() {
-        // Observe screen configuration changes
-        NotificationCenter.default.addObserver(
+        screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            print("Screen configuration changed")
+            NSLog("📺 Screen configuration changed")
             self?.scheduleWindowUpdate()
         }
         
-        // Observe desktop space changes
-        NSWorkspace.shared.notificationCenter.addObserver(
+        spaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.activeSpaceDidChangeNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            print("Desktop space changed - refreshing quotes")
             self?.refreshAllQuotes()
         }
     }
     
-    /// Debounce screen change notifications to avoid rapid tear-down/setup cycles.
-    /// macOS can fire multiple notifications in quick succession when displays
-    /// connect or disconnect.
+    // MARK: - Screen Change Handling
+    
     private func scheduleWindowUpdate() {
-        // Cancel any previously scheduled update
         screenChangeWorkItem?.cancel()
         
+        let currentScreenCount = NSScreen.screens.count
+        
+        // Use a longer delay when screens are added (connection is riskier
+        // because WindowServer needs time to fully initialize the display).
+        // Shorter delay for disconnections since those screens are just gone.
+        let delay: TimeInterval = currentScreenCount > previousScreenCount ? 2.5 : 1.5
+        
         let workItem = DispatchWorkItem { [weak self] in
-            self?.updateWindows()
+            self?.handleScreenChange()
         }
         screenChangeWorkItem = workItem
-        
-        // Wait 1 second for screen configuration to stabilize
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: workItem)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
     }
     
-    private func updateWindows() {
-        guard !isUpdating else {
-            // If we're already updating, mark that another update is needed
-            pendingUpdate = true
-            return
+    private func handleScreenChange() {
+        let currentScreens = NSScreen.screens
+        let currentIDs = Set(currentScreens.map { screenIdentifier(for: $0) })
+        let existingIDs = Set(windowControllers.keys)
+        
+        // Remove windows for screens that no longer exist
+        let removedIDs = existingIDs.subtracting(currentIDs)
+        for id in removedIDs {
+            NSLog("🗑️  Removing window for disconnected screen: \(id)")
+            windowControllers[id]?.hideAndRelease()
+            windowControllers.removeValue(forKey: id)
         }
         
-        isUpdating = true
+        // Add windows for new screens
+        let addedIDs = currentIDs.subtracting(existingIDs)
+        for (index, screen) in currentScreens.enumerated() {
+            let id = screenIdentifier(for: screen)
+            if addedIDs.contains(id) {
+                NSLog("➕ Adding window for new screen: \(id)")
+                let controller = QuoteWindowController(
+                    screen: screen,
+                    quoteManager: quoteManager,
+                    windowIndex: index
+                )
+                windowControllers[id] = controller
+                controller.showWindow()
+            }
+        }
         
-        // Close all existing windows safely
-        let controllers = windowControllers
+        previousScreenCount = currentScreens.count
+        NSLog("✅ Screen change handled. Active windows: \(windowControllers.count)")
+    }
+    
+    private func removeAllWindows() {
+        for (_, controller) in windowControllers {
+            controller.hideAndRelease()
+        }
         windowControllers.removeAll()
-        controllers.forEach { $0.closeWindow() }
-        
-        // Recreate windows for current screens
-        setupWindows()
-        
-        isUpdating = false
-        
-        // If another screen change happened while we were updating, process it
-        if pendingUpdate {
-            pendingUpdate = false
-            scheduleWindowUpdate()
-        }
     }
     
     func refreshAllQuotes() {
-        // Refresh each window with a new quote
-        windowControllers.forEach { $0.refreshQuote() }
+        windowControllers.values.forEach { $0.refreshQuote() }
     }
 }
 
-// Window controller for each quote window
+// MARK: - QuoteWindowController
+
+/// Controls a single quote overlay window for one screen.
+/// Uses NSPanel instead of NSWindow to avoid participation in the
+/// window cycling and minimize AppKit's internal bookkeeping.
 class QuoteWindowController {
-    private var window: NSWindow?
+    private var panel: NSPanel?
+    private var hostingView: NSHostingView<RandomPositionQuoteView>?
     private let quoteManager: QuoteManager
     private let windowIndex: Int
     private var currentQuote: Quote
@@ -154,98 +184,89 @@ class QuoteWindowController {
             }
         }
         
-        setupWindow(for: screen)
+        setupPanel(for: screen)
     }
     
-    private func setupWindow(for screen: NSScreen) {
-        // Use screen's frame directly for window positioning
+    private func setupPanel(for screen: NSScreen) {
         let screenFrame = screen.frame
         
-        let window = NSWindow(
+        // Use NSPanel — it's lighter weight than NSWindow and designed for
+        // auxiliary/utility purposes. It won't become key window or participate
+        // in the normal window lifecycle as aggressively.
+        let panel = NSPanel(
             contentRect: screenFrame,
-            styleMask: [.borderless, .fullSizeContentView],
+            styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
-            defer: false
+            defer: true,
+            screen: screen
         )
         
-        // CRITICAL: Set the screen BEFORE configuring the window
-        window.setFrameOrigin(screenFrame.origin)
+        panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopWindow)))
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.ignoresMouseEvents = true
+        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
+        panel.hasShadow = false
+        panel.hidesOnDeactivate = false
+        panel.becomesKeyOnlyIfNeeded = true
         
-        // Configure window to be behind all apps (desktop level)
-        window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopWindow)))
-        window.backgroundColor = .clear
-        window.isOpaque = false
-        window.ignoresMouseEvents = true
-        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
-        window.hasShadow = false
+        // Prevent the panel from being released when closed
+        panel.isReleasedWhenClosed = false
         
-        // Create quote view with random position
         let quoteView = RandomPositionQuoteView(
             quote: currentQuote,
             screenFrame: screenFrame
         )
         
-        let hostingView = NSHostingView(rootView: quoteView)
-        hostingView.frame = CGRect(origin: .zero, size: screenFrame.size)
-        hostingView.autoresizingMask = [.width, .height]
+        let hosting = NSHostingView(rootView: quoteView)
+        hosting.frame = CGRect(origin: .zero, size: screenFrame.size)
+        hosting.autoresizingMask = [.width, .height]
         
-        window.contentView?.addSubview(hostingView)
+        panel.contentView = hosting
+        panel.setFrame(screenFrame, display: false)
         
-        // Force the window to the correct screen
-        window.setFrame(screenFrame, display: true)
-        if let targetScreen = NSScreen.screens.first(where: { $0.frame == screenFrame }) {
-            NSLog("   - Positioned window on screen: \(targetScreen.localizedName)")
-            print("   - Positioned window on screen: \(targetScreen.localizedName)")
-        }
-        
-        self.window = window
+        self.panel = panel
+        self.hostingView = hosting
     }
     
     func showWindow() {
-        guard let window = window else {
-            let errorMsg = "❌ Window \(windowIndex) is nil, cannot show"
-            NSLog(errorMsg)
-            print(errorMsg)
+        guard let panel = panel else {
+            NSLog("❌ Window \(windowIndex) is nil, cannot show")
             return
         }
         
-        NSLog("🪟 Showing window \(windowIndex):")
-        print("🪟 Showing window \(windowIndex):")
-        NSLog("   - Frame: \(window.frame)")
-        print("   - Frame: \(window.frame)")
-        NSLog("   - Screen: \(window.screen?.localizedName ?? "unknown")")
-        print("   - Screen: \(window.screen?.localizedName ?? "unknown")")
-        NSLog("   - Level: \(window.level.rawValue)")
-        print("   - Level: \(window.level.rawValue)")
-        NSLog("   - Quote: \(currentQuote.text.prefix(50))...")
-        print("   - Quote: \(currentQuote.text.prefix(50))...")
+        NSLog("🪟 Showing window \(windowIndex) - Quote: \(currentQuote.text.prefix(40))...")
         
-        // Make sure window is visible
-        window.orderFrontRegardless()
-        window.makeKeyAndOrderFront(nil)
-        
-        // Force window to back after making it visible
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self, weak window] in
-            guard let window = window else { return }
-            window.orderBack(nil)
-            if let index = self?.windowIndex {
-                let successMsg = "✅ Window \(index) ordered to back"
-                NSLog(successMsg)
-                print(successMsg)
-            }
-        }
+        // orderBack places it behind all other windows (desktop level)
+        panel.orderBack(nil)
     }
     
-    func closeWindow() {
-        window?.orderOut(nil)
-        window?.close()
-        window = nil
+    /// Safely hide and release all resources.
+    /// This method ensures the hosting view is detached cleanly.
+    func hideAndRelease() {
+        guard let panel = panel else { return }
+        
+        // 1. Order out (hide) the panel first
+        panel.orderOut(nil)
+        
+        // 2. Detach the hosting view from the panel to break the SwiftUI
+        //    rendering pipeline's connection to this window/screen.
+        //    Setting contentView to a plain NSView avoids leaving SwiftUI
+        //    objects in the autorelease pool tied to a dead screen context.
+        hostingView = nil
+        panel.contentView = NSView()
+        
+        // 3. Release our reference. The panel won't dealloc immediately
+        //    because isReleasedWhenClosed = false and we ordered it out
+        //    rather than closing it. This gives the autorelease pool time
+        //    to drain without hitting freed memory.
+        self.panel = nil
     }
     
     func refreshQuote() {
-        guard let window = window else { return }
+        guard let panel = panel else { return }
+        guard let screen = panel.screen ?? NSScreen.screens.first else { return }
         
-        // Get a new quote
         let oldQuote = currentQuote
         for _ in 0..<10 {
             quoteManager.getRandomQuote()
@@ -255,27 +276,23 @@ class QuoteWindowController {
             }
         }
         
-        print("Window \(windowIndex) refreshed with new quote: \(currentQuote.text.prefix(30))...")
-        
-        // Update the view safely
-        guard let contentView = window.contentView else { return }
-        guard let screen = window.screen else { return }
-        
         let quoteView = RandomPositionQuoteView(
             quote: currentQuote,
             screenFrame: screen.frame
         )
         
-        let hostingView = NSHostingView(rootView: quoteView)
-        hostingView.frame = contentView.bounds
-        hostingView.autoresizingMask = [.width, .height]
+        let hosting = NSHostingView(rootView: quoteView)
+        hosting.frame = CGRect(origin: .zero, size: panel.frame.size)
+        hosting.autoresizingMask = [.width, .height]
         
-        contentView.subviews.forEach { $0.removeFromSuperview() }
-        contentView.addSubview(hostingView)
+        // Replace old hosting view
+        self.hostingView = hosting
+        panel.contentView = hosting
     }
 }
 
-// Quote view with random positioning
+// MARK: - RandomPositionQuoteView
+
 struct RandomPositionQuoteView: View {
     let quote: Quote
     let screenFrame: CGRect
@@ -285,11 +302,9 @@ struct RandomPositionQuoteView: View {
         self.quote = quote
         self.screenFrame = screenFrame
         
-        // Generate random position
-        // Avoid edges (100px margin)
         let margin: CGFloat = 100
-        let maxWidth = screenFrame.width - margin * 2
-        let maxHeight = screenFrame.height - margin * 2
+        let maxWidth = max(screenFrame.width - margin * 2, margin)
+        let maxHeight = max(screenFrame.height - margin * 2, margin)
         
         let randomX = CGFloat.random(in: margin...(margin + maxWidth))
         let randomY = CGFloat.random(in: margin...(margin + maxHeight))
