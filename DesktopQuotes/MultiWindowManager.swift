@@ -11,6 +11,9 @@ import AppKit
 class MultiWindowManager: ObservableObject {
     private var windowControllers: [QuoteWindowController] = []
     private let quoteManager: QuoteManager
+    private var isUpdating = false
+    private var pendingUpdate = false
+    private var screenChangeWorkItem: DispatchWorkItem?
     
     init(quoteManager: QuoteManager) {
         self.quoteManager = quoteManager
@@ -23,21 +26,22 @@ class MultiWindowManager: ObservableObject {
     }
     
     private func setupWindows() {
-        let screenCount = NSScreen.screens.count
+        let screens = NSScreen.screens
+        let screenCount = screens.count
         NSLog("🖥️  Setting up windows for \(screenCount) screens")
         print("🖥️  Setting up windows for \(screenCount) screens")
         NSLog("🖥️  Available screens:")
         print("🖥️  Available screens:")
         
         // Log all screen details
-        for (index, screen) in NSScreen.screens.enumerated() {
+        for (index, screen) in screens.enumerated() {
             let logMsg = "   Screen \(index): frame=\(screen.frame), visibleFrame=\(screen.visibleFrame)"
             NSLog(logMsg)
             print(logMsg)
         }
         
         // Create a window for each screen
-        for (index, screen) in NSScreen.screens.enumerated() {
+        for (index, screen) in screens.enumerated() {
             let logMsg = "🪟 Creating window \(index) for screen at \(screen.frame)"
             NSLog(logMsg)
             print(logMsg)
@@ -67,7 +71,7 @@ class MultiWindowManager: ObservableObject {
             queue: .main
         ) { [weak self] _ in
             print("Screen configuration changed")
-            self?.updateWindows()
+            self?.scheduleWindowUpdate()
         }
         
         // Observe desktop space changes
@@ -81,13 +85,46 @@ class MultiWindowManager: ObservableObject {
         }
     }
     
+    /// Debounce screen change notifications to avoid rapid tear-down/setup cycles.
+    /// macOS can fire multiple notifications in quick succession when displays
+    /// connect or disconnect.
+    private func scheduleWindowUpdate() {
+        // Cancel any previously scheduled update
+        screenChangeWorkItem?.cancel()
+        
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.updateWindows()
+        }
+        screenChangeWorkItem = workItem
+        
+        // Wait 1 second for screen configuration to stabilize
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: workItem)
+    }
+    
     private func updateWindows() {
-        // Close all existing windows
-        windowControllers.forEach { $0.closeWindow() }
+        guard !isUpdating else {
+            // If we're already updating, mark that another update is needed
+            pendingUpdate = true
+            return
+        }
+        
+        isUpdating = true
+        
+        // Close all existing windows safely
+        let controllers = windowControllers
         windowControllers.removeAll()
+        controllers.forEach { $0.closeWindow() }
         
         // Recreate windows for current screens
         setupWindows()
+        
+        isUpdating = false
+        
+        // If another screen change happened while we were updating, process it
+        if pendingUpdate {
+            pendingUpdate = false
+            scheduleWindowUpdate()
+        }
     }
     
     func refreshAllQuotes() {
@@ -155,8 +192,8 @@ class QuoteWindowController {
         window.contentView?.addSubview(hostingView)
         
         // Force the window to the correct screen
+        window.setFrame(screenFrame, display: true)
         if let targetScreen = NSScreen.screens.first(where: { $0.frame == screenFrame }) {
-            window.setFrame(screenFrame, display: true)
             NSLog("   - Positioned window on screen: \(targetScreen.localizedName)")
             print("   - Positioned window on screen: \(targetScreen.localizedName)")
         }
@@ -188,20 +225,26 @@ class QuoteWindowController {
         window.makeKeyAndOrderFront(nil)
         
         // Force window to back after making it visible
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self, weak window] in
+            guard let window = window else { return }
             window.orderBack(nil)
-            let successMsg = "✅ Window \(self.windowIndex) ordered to back"
-            NSLog(successMsg)
-            print(successMsg)
+            if let index = self?.windowIndex {
+                let successMsg = "✅ Window \(index) ordered to back"
+                NSLog(successMsg)
+                print(successMsg)
+            }
         }
     }
     
     func closeWindow() {
+        window?.orderOut(nil)
         window?.close()
         window = nil
     }
     
     func refreshQuote() {
+        guard let window = window else { return }
+        
         // Get a new quote
         let oldQuote = currentQuote
         for _ in 0..<10 {
@@ -214,20 +257,21 @@ class QuoteWindowController {
         
         print("Window \(windowIndex) refreshed with new quote: \(currentQuote.text.prefix(30))...")
         
-        // Update the view
-        if let window = window, let screen = window.screen {
-            let quoteView = RandomPositionQuoteView(
-                quote: currentQuote,
-                screenFrame: screen.frame
-            )
-            
-            let hostingView = NSHostingView(rootView: quoteView)
-            hostingView.frame = window.contentView!.bounds
-            hostingView.autoresizingMask = [.width, .height]
-            
-            window.contentView?.subviews.forEach { $0.removeFromSuperview() }
-            window.contentView?.addSubview(hostingView)
-        }
+        // Update the view safely
+        guard let contentView = window.contentView else { return }
+        guard let screen = window.screen else { return }
+        
+        let quoteView = RandomPositionQuoteView(
+            quote: currentQuote,
+            screenFrame: screen.frame
+        )
+        
+        let hostingView = NSHostingView(rootView: quoteView)
+        hostingView.frame = contentView.bounds
+        hostingView.autoresizingMask = [.width, .height]
+        
+        contentView.subviews.forEach { $0.removeFromSuperview() }
+        contentView.addSubview(hostingView)
     }
 }
 
